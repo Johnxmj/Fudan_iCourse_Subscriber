@@ -104,8 +104,12 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
           if [ -f data/sharded/icourse-index.enc ]; then
-            python scripts/db_shard.py reassemble data/sharded data/icourse.db
-            echo "Reassembled sharded database."
+            if python scripts/db_shard.py reassemble data/sharded data/icourse.db; then
+              echo "Reassembled sharded database."
+            else
+              echo "::warning::Sharded database decryption failed. Starting with fresh database."
+              rm -f data/icourse.db
+            fi
             exit 0
           fi
 
@@ -202,10 +206,14 @@ jobs:
               base=$(basename "$path")
               git show "origin/data:$path" > "data/remote_sharded/shards/$base"
             done
-            python scripts/db_shard.py reassemble data/remote_sharded data/remote.db
-            echo "Merging local changes into latest remote..."
-            python scripts/merge_db.py data/icourse.db data/remote.db
-            DEPLOY_DB=data/remote.db
+            if python scripts/db_shard.py reassemble data/remote_sharded data/remote.db; then
+              echo "Merging local changes into latest remote..."
+              python scripts/merge_db.py data/icourse.db data/remote.db
+              DEPLOY_DB=data/remote.db
+            else
+              echo "::warning::Remote sharded database uses a different key; replacing it."
+              rm -f data/remote.db
+            fi
           fi
 
           rm -rf data/sharded_out
