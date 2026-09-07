@@ -2,7 +2,7 @@ requests
 pycryptodome
 sherpa-onnx
 numpy
-openai
+openai<3
 pillow
 markdown
 psutil
