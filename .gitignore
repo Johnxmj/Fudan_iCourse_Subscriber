@@ -50,6 +50,7 @@ bugs.md
 db-viewer/
 
 .claude/
+.worktrees/
 # .github/
 # Shard inspection temp files
 _shard_inspect/
