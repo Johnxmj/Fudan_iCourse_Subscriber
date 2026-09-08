@@ -1,7 +1,7 @@
 # Fudan iCourse Live Player Design
 
 Date: 2026-09-08
-Status: awaiting written-spec review
+Status: approved for implementation planning
 
 ## Purpose
 
