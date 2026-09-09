@@ -112,6 +112,37 @@ _MIN_INLINE_HEIGHT = 13  # minimum logical height for inline formulas (px)
 _IMAGE_CACHE: dict[str, tuple] = {}
 
 
+def _escape_unmatched_math_delimiters(text: str) -> str:
+    """Escape lone inline ``$`` delimiters before Markdown conversion.
+
+    LLM output occasionally contains a truncated formula with only an opening
+    dollar sign.  Markdown then leaves that marker (and LaTeX commands) in the
+    rendered email.  Pair delimiters from left to right and HTML-escape any
+    unpaired marker so the source remains readable without looking broken.
+    """
+    positions = [m.start() for m in re.finditer(r"(?<!\\)\$(?!\$)", text)]
+    if len(positions) % 2 == 0:
+        return text
+    unmatched = positions[-1]
+    return text[:unmatched] + "&#36;" + text[unmatched + 1:]
+
+
+def _balanced_latex(value: str) -> bool:
+    """Return whether LaTeX braces are balanced (ignoring escaped braces)."""
+    depth = 0
+    for match in re.finditer(r"\\.|[{}]", value):
+        token = match.group(0)
+        if token.startswith("\\"):
+            continue
+        if token == "{":
+            depth += 1
+        elif depth == 0:
+            return False
+        else:
+            depth -= 1
+    return depth == 0
+
+
 def _fetch_latex_image(url: str, dpi: int = 300) -> tuple:
     """Fetch rendered LaTeX image, return (width, height, png_bytes).
 
@@ -166,6 +197,7 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
                     with {cid_name: png_bytes} entries for the caller to attach
                     to the MIME message.
     """
+    md_text = _escape_unmatched_math_delimiters(md_text)
     latex_map: dict[str, str] = {}
     counter = 0
 
@@ -214,14 +246,17 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
     for key, original in latex_map.items():
         is_block = original.startswith("$$")
         latex_content = original[2:-2] if is_block else original[1:-1]
+        if not _balanced_latex(latex_content):
+            latex_info[key] = ("", latex_content, is_block)
+            continue
         prefix = r"\dpi{300}\bg{white}" if is_block else r"\dpi{300}\bg{white}\inline"
         url = f"https://latex.codecogs.com/png.latex?{prefix}%20{quote(latex_content)}"
         latex_info[key] = (url, latex_content, is_block)
 
-    _prefetch_latex_images([info[0] for info in latex_info.values()])
+    _prefetch_latex_images([info[0] for info in latex_info.values() if info[0]])
 
     for key, (url, latex_content, is_block) in latex_info.items():
-        w, h, img_data = _fetch_latex_image(url)
+        w, h, img_data = _fetch_latex_image(url) if url else (None, None, None)
 
         if is_block:
             if w and h:
