@@ -173,7 +173,8 @@ class AudioDownloader:
                 if isinstance(h, AudioHandle)
             )
 
-    def schedule(self, client, course_id: str, sub_id: str) -> None:
+    def schedule(self, client, course_id: str, sub_id: str,
+                 *, start_seconds: float = 0) -> None:
         """Reserve a slot for sub_id and spawn ffmpeg in the background.
 
         Returns immediately. If all slots are taken the spawn blocks in its
@@ -189,7 +190,7 @@ class AudioDownloader:
 
         threading.Thread(
             target=self._spawn_when_ready,
-            args=(client, course_id, sub_id, pending),
+            args=(client, course_id, sub_id, pending, start_seconds),
             name=f"audio-spawn-{sub_id}",
             daemon=True,
         ).start()
@@ -201,7 +202,7 @@ class AudioDownloader:
                 self._active.pop(sub_id, None)
 
     def _spawn_when_ready(self, client, course_id: str, sub_id: str,
-                          pending: _PendingSpawn):
+                          pending: _PendingSpawn, start_seconds: float = 0):
         try:
             self._sem.acquire()
             try:
@@ -221,13 +222,19 @@ class AudioDownloader:
                     "-reconnect", "1",
                     "-reconnect_streamed", "1",
                     "-reconnect_delay_max", "5",
+                ]
+                # Seek on the input so a renewed HTTP request fetches the
+                # unread remainder instead of downloading the head again.
+                if start_seconds:
+                    cmd.extend(["-ss", str(start_seconds)])
+                cmd.extend([
                     "-i", vpn_url,
                     "-vn",
                     "-ar", "16000",
                     "-ac", "1",
                     "-f", "f32le",
                     path,
-                ]
+                ])
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,

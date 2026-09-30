@@ -318,9 +318,7 @@ class LectureRunner:
             return None, None
 
         try:
-            transcript, segments = self._transcriber.transcribe_tail(
-                handle.path, handle.process, handle.stderr_chunks,
-            )
+            transcript, segments = self._transcribe_with_recovery(course_id, sub_id, handle)
         except NoAudioStreamError as e:
             self._reporter.info(f"    [SKIP] Video-only (no audio stream): {e}")
             self._db.update_error(sub_id, "transcribe", str(e))
@@ -348,6 +346,66 @@ class LectureRunner:
 
         self._db.update_transcript(sub_id, transcript)
         return transcript, segments
+
+    def _transcribe_with_recovery(self, course_id: str, sub_id: str, handle):
+        """Resume a truncated HTTP pull twice; persist only a complete result.
+
+        Each fresh download signs a new source URL and seeks to the decoded
+        sample offset. ASR timestamps are local to that download, so shift
+        them back onto the lecture's timeline before prompt assembly.
+        """
+        offset = 0.0
+        known_total = 0.0
+        texts = []
+        merged = []
+        downloader = self._scheduler.audio_downloader
+        for attempt in range(3):
+            try:
+                text, segments = self._transcriber.transcribe_tail(
+                    handle.path, handle.process, handle.stderr_chunks,
+                    start_seconds=offset,
+                )
+                if known_total:
+                    received = self._transcriber._last_duration
+                    remaining = max(0, known_total - offset)
+                    if received < remaining * 0.9:
+                        raise IncompleteAudioError(
+                            "Resumed audio remains incomplete", received, remaining, text, segments,
+                        )
+            except IncompleteAudioError as error:
+                if error.actual_duration == 0:
+                    known_total = max(known_total, error.expected_duration)
+                else:
+                    known_total = max(known_total, offset + error.expected_duration)
+                if attempt == 2:
+                    raise
+                text, segments = error.transcript, error.segments
+                texts.append(text)
+                merged.extend(self._offset_segments(segments, offset))
+                offset += error.actual_duration
+                self._reporter.info(
+                    f"    [Audio recovery] {sub_id}: resume at {offset:.1f}s "
+                    f"(attempt {attempt + 2}/3)"
+                )
+                downloader.release(sub_id)
+                downloader.schedule(self._client, course_id, sub_id, start_seconds=offset)
+                handle = downloader.get(sub_id, timeout=120)
+                if handle is None:
+                    raise RuntimeError("No playable audio source during recovery")
+            except NoAudioStreamError as error:
+                if offset:
+                    raise RuntimeError("Remaining audio unavailable after partial transcription") from error
+                raise
+            else:
+                texts.append(text)
+                merged.extend(self._offset_segments(segments, offset))
+                return " ".join(t for t in texts if t), merged
+
+    @staticmethod
+    def _offset_segments(segments, seconds):
+        offset_ms = round(seconds * 1000)
+        return [{**segment, "start_ms": segment["start_ms"] + offset_ms,
+                 "end_ms": segment["end_ms"] + offset_ms} for segment in segments]
 
     def _summarize(self, sub_id: str, course_title: str, transcript: str,
                    transcript_segments: list[dict] | None) -> Optional[str]:

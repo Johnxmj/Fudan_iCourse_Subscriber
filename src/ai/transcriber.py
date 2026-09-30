@@ -501,9 +501,11 @@ class Transcriber:
 
         if total_bytes == 0:
             stderr_text = stderr_output.decode(errors="replace")[-500:]
-            raise RuntimeError(
+            raise IncompleteAudioError(
                 f"ffmpeg produced no audio output (0 bytes received).\n"
-                f"stderr (last 500 chars):\n{stderr_text}"
+                f"stderr (last 500 chars):\n{stderr_text}",
+                actual_duration=0, expected_duration=self._media_duration or 0,
+                transcript="", segments=[],
             )
 
         speed_kbps = (total_bytes / 1024) / elapsed if elapsed > 0 else 0
@@ -545,7 +547,7 @@ class Transcriber:
         return transcript, segments
 
     def _check_completeness(self, transcript: str,
-                            segments: list[dict]) -> None:
+                            segments: list[dict], *, start_seconds: float = 0) -> None:
         """Raise IncompleteAudioError when we received <90 % of the media.
 
         ``_media_duration`` is parsed from ffmpeg's stderr by
@@ -553,14 +555,17 @@ class Transcriber:
         The partial result rides on the exception so the caller can still
         inspect it."""
         if self._media_duration and self._media_duration > 0:
-            ratio = self._last_duration / self._media_duration
+            expected = max(0, self._media_duration - start_seconds)
+            if not expected:
+                return
+            ratio = self._last_duration / expected
             if ratio < 0.9:
                 raise IncompleteAudioError(
                     f"Only received {self._last_duration:.0f}s of "
-                    f"{self._media_duration:.0f}s audio ({ratio:.0%}). "
+                    f"{expected:.0f}s audio ({ratio:.0%}). "
                     f"Connection may have dropped.",
                     actual_duration=self._last_duration,
-                    expected_duration=self._media_duration,
+                    expected_duration=expected,
                     transcript=transcript,
                     segments=segments,
                 )
@@ -571,6 +576,7 @@ class Transcriber:
                         ffmpeg_proc: subprocess.Popen,
                         stderr_chunks: list[bytes],
                         timeout: int = 7200,
+                        *, start_seconds: float = 0,
                         ) -> tuple[str, list[dict]]:
         """Read PCM samples from a disk file that ffmpeg is *concurrently* writing.
 
@@ -629,7 +635,7 @@ class Transcriber:
             # ffmpeg can exit 0 on a server-side truncated stream; without
             # this check the partial transcript would silently pass as a
             # complete lecture.
-            self._check_completeness(transcript, segments)
+            self._check_completeness(transcript, segments, start_seconds=start_seconds)
             return transcript, segments
         finally:
             f.close()
