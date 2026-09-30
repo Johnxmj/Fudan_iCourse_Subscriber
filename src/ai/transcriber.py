@@ -504,7 +504,8 @@ class Transcriber:
             raise IncompleteAudioError(
                 f"ffmpeg produced no audio output (0 bytes received).\n"
                 f"stderr (last 500 chars):\n{stderr_text}",
-                actual_duration=0, expected_duration=0, transcript="", segments=[],
+                actual_duration=0, expected_duration=self._media_duration or 0,
+                transcript="", segments=[],
             )
 
         speed_kbps = (total_bytes / 1024) / elapsed if elapsed > 0 else 0

@@ -373,7 +373,10 @@ class LectureRunner:
                             "Resumed audio remains incomplete", received, remaining, text, segments,
                         )
             except IncompleteAudioError as error:
-                known_total = max(known_total, offset + error.expected_duration)
+                if error.actual_duration == 0:
+                    known_total = max(known_total, error.expected_duration)
+                else:
+                    known_total = max(known_total, offset + error.expected_duration)
                 if attempt == 2:
                     raise
                 text, segments = error.transcript, error.segments
