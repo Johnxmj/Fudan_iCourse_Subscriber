@@ -77,6 +77,15 @@ class AudioRecoveryTest(unittest.TestCase):
         runner._db.update_transcript.assert_not_called()
 
     @patch('src.pipeline.lecture_runner.config.USE_OFFICIAL_TRANSCRIPT', False)
+    def test_empty_retry_retries_at_same_offset(self):
+        runner = self.runner([truncated(4065, 10027, 'head'), truncated(0, 0, ''),
+                              ('tail', [{'start_ms': 0, 'end_ms': 5962000, 'text': 'tail'}])])
+        text, _ = runner._get_transcript(None, '37234', 'lecture')
+        self.assertEqual(text, 'head tail')
+        offsets = [c.kwargs.get('start_seconds', 0) for c in runner._scheduler.audio_downloader.schedule.call_args_list]
+        self.assertEqual(offsets, [0, 4065, 4065])
+
+    @patch('src.pipeline.lecture_runner.config.USE_OFFICIAL_TRANSCRIPT', False)
     def test_missing_tail_audio_does_not_mark_a_partial_lecture_processed(self):
         runner = self.runner([truncated(4065, 10027, 'head'), NoAudioStreamError('no tail')])
         with self.assertRaises(RuntimeError):

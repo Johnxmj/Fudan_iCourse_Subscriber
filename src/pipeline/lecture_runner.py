@@ -374,7 +374,7 @@ class LectureRunner:
                         )
             except IncompleteAudioError as error:
                 known_total = max(known_total, offset + error.expected_duration)
-                if attempt == 2 or error.actual_duration <= 0:
+                if attempt == 2:
                     raise
                 text, segments = error.transcript, error.segments
                 texts.append(text)
