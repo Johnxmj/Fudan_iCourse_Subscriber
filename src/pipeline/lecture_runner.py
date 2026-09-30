@@ -355,6 +355,7 @@ class LectureRunner:
         them back onto the lecture's timeline before prompt assembly.
         """
         offset = 0.0
+        known_total = 0.0
         texts = []
         merged = []
         downloader = self._scheduler.audio_downloader
@@ -364,7 +365,15 @@ class LectureRunner:
                     handle.path, handle.process, handle.stderr_chunks,
                     start_seconds=offset,
                 )
+                if known_total:
+                    received = self._transcriber._last_duration
+                    remaining = max(0, known_total - offset)
+                    if received < remaining * 0.9:
+                        raise IncompleteAudioError(
+                            "Resumed audio remains incomplete", received, remaining, text, segments,
+                        )
             except IncompleteAudioError as error:
+                known_total = max(known_total, offset + error.expected_duration)
                 if attempt == 2 or error.actual_duration <= 0:
                     raise
                 text, segments = error.transcript, error.segments

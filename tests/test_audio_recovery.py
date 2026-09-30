@@ -21,7 +21,15 @@ class AudioRecoveryTest(unittest.TestCase):
         runner._reporter = Mock()
         runner._official_cache = {}
         runner._transcriber = Mock()
-        runner._transcriber.transcribe_tail.side_effect = outcomes
+        pending = iter(outcomes)
+        def consume(*args, **kwargs):
+            outcome = next(pending)
+            if isinstance(outcome, Exception):
+                raise outcome
+            runner._transcriber._last_duration = max(
+                (s['end_ms'] for s in outcome[1]), default=0) / 1000
+            return outcome
+        runner._transcriber.transcribe_tail.side_effect = consume
         handle = SimpleNamespace(path='audio.raw', process=Mock(), stderr_chunks=[])
         downloader = Mock()
         downloader.get.return_value = handle
@@ -59,6 +67,14 @@ class AudioRecoveryTest(unittest.TestCase):
         with self.assertRaises(IncompleteAudioError) as error:
             transcriber._check_completeness('partial', [], start_seconds=4065)
         self.assertEqual(error.exception.expected_duration, 5962)
+
+    @patch('src.pipeline.lecture_runner.config.USE_OFFICIAL_TRANSCRIPT', False)
+    def test_retry_without_duration_header_cannot_persist_short_tail(self):
+        runner = self.runner([truncated(4065, 10027, 'head'),
+                              ('short', [{'start_ms': 0, 'end_ms': 1000, 'text': 'short'}]),
+                              ('short', [{'start_ms': 0, 'end_ms': 1000, 'text': 'short'}])])
+        self.assertEqual(runner._get_transcript(None, '37234', 'lecture'), (None, None))
+        runner._db.update_transcript.assert_not_called()
 
     @patch('src.pipeline.lecture_runner.config.USE_OFFICIAL_TRANSCRIPT', False)
     def test_missing_tail_audio_does_not_mark_a_partial_lecture_processed(self):
